@@ -1,0 +1,46 @@
+name: Publish database-lib to npm
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'   # e.g. v1.0.0, v1.2.3
+
+jobs:
+  publish:
+    name: Build & Publish
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      # 1) Checkout the repo
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2) Use Node.js
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      # 3) Install dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      # 4) Run build (TypeScript -> dist/)
+      - name: Build package
+        run: npm run build
+
+      # 5) Run tests (optional - replace with real tests later)
+      - name: Run tests
+        run: npm test
+
+      # 6) Publish to npm
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "Publishing @ciscodeapps-template/database to npm..."
+          npm publish --access public
