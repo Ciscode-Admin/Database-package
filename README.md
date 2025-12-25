@@ -1,7 +1,3 @@
-Here’s a full `README.md` you can drop straight into your repo.
-
----
-
 ````md
 # @ciscodeapps-template/database
 
