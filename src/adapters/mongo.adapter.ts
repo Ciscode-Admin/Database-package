@@ -9,6 +9,7 @@ import {
     PageOptions,
     TransactionOptions,
     TransactionCallback,
+    HealthCheckResult,
     DATABASE_KIT_CONSTANTS,
 } from '../contracts/database.contracts';
 
@@ -81,6 +82,67 @@ export class MongoAdapter {
      */
     isConnected(): boolean {
         return mongoose.connection.readyState === 1;
+    }
+
+    /**
+     * Performs a health check on the MongoDB connection.
+     * Sends a ping command to verify the database is responsive.
+     * 
+     * @returns Health check result with status and response time
+     * 
+     * @example
+     * ```typescript
+     * const health = await adapter.healthCheck();
+     * if (!health.healthy) {
+     *   console.error('Database unhealthy:', health.error);
+     * }
+     * ```
+     */
+    async healthCheck(): Promise<HealthCheckResult> {
+        const startTime = Date.now();
+
+        try {
+            if (!this.isConnected()) {
+                return {
+                    healthy: false,
+                    responseTimeMs: Date.now() - startTime,
+                    type: 'mongo',
+                    error: 'Not connected to MongoDB',
+                };
+            }
+
+            // Send ping command to verify connection
+            const admin = mongoose.connection.db?.admin();
+            const pingResult = await admin?.ping();
+
+            if (!pingResult?.ok) {
+                return {
+                    healthy: false,
+                    responseTimeMs: Date.now() - startTime,
+                    type: 'mongo',
+                    error: 'Ping command failed',
+                };
+            }
+
+            // Get server info for details
+            const serverInfo = await admin?.serverInfo();
+
+            return {
+                healthy: true,
+                responseTimeMs: Date.now() - startTime,
+                type: 'mongo',
+                details: {
+                    version: serverInfo?.version,
+                },
+            };
+        } catch (error) {
+            return {
+                healthy: false,
+                responseTimeMs: Date.now() - startTime,
+                type: 'mongo',
+                error: error instanceof Error ? error.message : 'Unknown error',
+            };
+        }
     }
 
     /**

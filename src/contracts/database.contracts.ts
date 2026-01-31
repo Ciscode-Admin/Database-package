@@ -43,6 +43,33 @@ export interface PostgresDatabaseConfig extends DatabaseConfigBase {
 export type DatabaseConfig = MongoDatabaseConfig | PostgresDatabaseConfig;
 
 // -----------------------------
+// Health Check Types
+// -----------------------------
+
+/**
+ * Result of a database health check.
+ */
+export interface HealthCheckResult {
+    /** Whether the database is healthy and responding */
+    healthy: boolean;
+    /** Response time in milliseconds */
+    responseTimeMs: number;
+    /** Database type */
+    type: DatabaseType;
+    /** Error message if unhealthy */
+    error?: string;
+    /** Additional details about the connection */
+    details?: {
+        /** Database version (if available) */
+        version?: string;
+        /** Connection pool status */
+        poolSize?: number;
+        /** Number of active connections */
+        activeConnections?: number;
+    };
+}
+
+// -----------------------------
 // Pagination Types
 // -----------------------------
 

@@ -261,4 +261,26 @@ describe('MongoAdapter', () => {
             );
         });
     });
+
+    describe('healthCheck', () => {
+        it('should return unhealthy when not connected', async () => {
+            const result = await adapter.healthCheck();
+
+            expect(result.healthy).toBe(false);
+            expect(result.type).toBe('mongo');
+            expect(result.error).toBe('Not connected to MongoDB');
+            expect(result.responseTimeMs).toBeGreaterThanOrEqual(0);
+        });
+
+        it('should have healthCheck method', () => {
+            expect(typeof adapter.healthCheck).toBe('function');
+        });
+
+        it('should return response time in result', async () => {
+            const result = await adapter.healthCheck();
+
+            expect(typeof result.responseTimeMs).toBe('number');
+            expect(result.responseTimeMs).toBeGreaterThanOrEqual(0);
+        });
+    });
 });

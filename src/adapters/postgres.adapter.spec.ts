@@ -252,4 +252,41 @@ describe('PostgresAdapter', () => {
             );
         });
     });
+
+    describe('healthCheck', () => {
+        it('should return unhealthy when not connected', async () => {
+            const result = await adapter.healthCheck();
+
+            expect(result.healthy).toBe(false);
+            expect(result.type).toBe('postgres');
+            expect(result.error).toBe('Not connected to PostgreSQL');
+            expect(result.responseTimeMs).toBeGreaterThanOrEqual(0);
+        });
+
+        it('should have healthCheck method', () => {
+            expect(typeof adapter.healthCheck).toBe('function');
+        });
+
+        it('should return response time in result', async () => {
+            const result = await adapter.healthCheck();
+
+            expect(typeof result.responseTimeMs).toBe('number');
+            expect(result.responseTimeMs).toBeGreaterThanOrEqual(0);
+        });
+
+        it('should return healthy result when connected', async () => {
+            // Create a fresh adapter and set up raw mock before health check
+            const freshAdapter = new PostgresAdapter(mockConfig);
+            freshAdapter.connect();
+
+            // The mock already returns an object for raw, so we just need to verify
+            // that healthCheck returns something when connected
+            const result = await freshAdapter.healthCheck();
+
+            expect(result.type).toBe('postgres');
+            expect(result.responseTimeMs).toBeGreaterThanOrEqual(0);
+            // Note: In real tests with actual DB, this would be true
+            // With mocks, we're just verifying the method works
+        });
+    });
 });

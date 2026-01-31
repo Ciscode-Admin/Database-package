@@ -9,6 +9,7 @@ import {
     PageOptions,
     TransactionOptions,
     TransactionCallback,
+    HealthCheckResult,
     DATABASE_KIT_CONSTANTS,
 } from '../contracts/database.contracts';
 
@@ -84,6 +85,60 @@ export class PostgresAdapter {
      */
     isConnected(): boolean {
         return !!this.knexInstance;
+    }
+
+    /**
+     * Performs a health check on the PostgreSQL connection.
+     * Executes a simple query to verify the database is responsive.
+     * 
+     * @returns Health check result with status and response time
+     * 
+     * @example
+     * ```typescript
+     * const health = await adapter.healthCheck();
+     * if (!health.healthy) {
+     *   console.error('Database unhealthy:', health.error);
+     * }
+     * ```
+     */
+    async healthCheck(): Promise<HealthCheckResult> {
+        const startTime = Date.now();
+
+        try {
+            if (!this.knexInstance) {
+                return {
+                    healthy: false,
+                    responseTimeMs: Date.now() - startTime,
+                    type: 'postgres',
+                    error: 'Not connected to PostgreSQL',
+                };
+            }
+
+            // Execute simple query to verify connection
+            const result = await this.knexInstance.raw('SELECT version(), current_database()');
+            const row = result.rows?.[0];
+
+            // Get pool info if available
+            const pool = (this.knexInstance.client as { pool?: { numUsed?: () => number; numFree?: () => number } }).pool;
+
+            return {
+                healthy: true,
+                responseTimeMs: Date.now() - startTime,
+                type: 'postgres',
+                details: {
+                    version: row?.version?.split(' ').slice(0, 2).join(' '),
+                    activeConnections: pool?.numUsed?.() ?? 0,
+                    poolSize: (pool?.numUsed?.() ?? 0) + (pool?.numFree?.() ?? 0),
+                },
+            };
+        } catch (error) {
+            return {
+                healthy: false,
+                responseTimeMs: Date.now() - startTime,
+                type: 'postgres',
+                error: error instanceof Error ? error.message : 'Unknown error',
+            };
+        }
     }
 
     /**

@@ -77,6 +77,9 @@ export {
     PostgresTransactionContext,
     TransactionCallback,
 
+    // Health check types
+    HealthCheckResult,
+
     // Repository options
     MongoRepositoryOptions,
     PostgresEntityConfig,

@@ -10,6 +10,7 @@ import {
     Repository,
     TransactionOptions,
     TransactionCallback,
+    HealthCheckResult,
 } from '../contracts/database.contracts';
 import { MongoAdapter } from '../adapters/mongo.adapter';
 import { PostgresAdapter } from '../adapters/postgres.adapter';
@@ -326,6 +327,47 @@ export class DatabaseService implements OnModuleDestroy {
             default: {
                 const exhaustiveCheck: never = this.config;
                 throw new Error(`Unsupported database type: ${(exhaustiveCheck as DatabaseConfig).type}`);
+            }
+        }
+    }
+
+    /**
+     * Performs a health check on the database connection.
+     * Useful for load balancer health endpoints and monitoring.
+     * 
+     * @returns Health check result with status, response time, and details
+     * 
+     * @example
+     * ```typescript
+     * // In a health check endpoint
+     * @Get('/health')
+     * async healthCheck() {
+     *   const result = await this.db.healthCheck();
+     *   if (!result.healthy) {
+     *     throw new ServiceUnavailableException(result.error);
+     *   }
+     *   return result;
+     * }
+     * ```
+     */
+    async healthCheck(): Promise<HealthCheckResult> {
+        switch (this.config.type) {
+            case 'mongo': {
+                const adapter = this.getMongoAdapter();
+                return adapter.healthCheck();
+            }
+            case 'postgres': {
+                const adapter = this.getPostgresAdapter();
+                return adapter.healthCheck();
+            }
+            default: {
+                const exhaustiveCheck: never = this.config;
+                return {
+                    healthy: false,
+                    responseTimeMs: 0,
+                    type: (exhaustiveCheck as DatabaseConfig).type,
+                    error: `Unsupported database type: ${(exhaustiveCheck as DatabaseConfig).type}`,
+                };
             }
         }
     }
