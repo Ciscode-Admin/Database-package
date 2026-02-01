@@ -46,9 +46,20 @@ export class MongoAdapter {
         if (!this.connectionPromise) {
             this.logger.log('Connecting to MongoDB...');
 
+            // Apply pool configuration from config
+            const poolConfig = this.config.pool || {};
+            const maxPoolSize = poolConfig.max ?? 10;
+            const minPoolSize = poolConfig.min ?? 5;
+            const serverSelectionTimeoutMS = this.config.serverSelectionTimeoutMS ?? 5000;
+            const socketTimeoutMS = this.config.socketTimeoutMS ?? 45000;
+            const maxIdleTimeMS = poolConfig.idleTimeoutMs ?? 30000;
+
             this.connectionPromise = mongoose.connect(this.config.connectionString, {
-                maxPoolSize: 10,
-                serverSelectionTimeoutMS: 5000,
+                maxPoolSize,
+                minPoolSize,
+                serverSelectionTimeoutMS,
+                socketTimeoutMS,
+                maxIdleTimeMS,
                 ...options,
             });
 
@@ -220,6 +231,14 @@ export class MongoAdapter {
                 return docs as T[];
             },
 
+            async findOne(filter: Record<string, unknown>): Promise<T | null> {
+                const mergedFilter = { ...filter, ...notDeletedFilter };
+                let query = model.findOne(mergedFilter);
+                if (session) query = query.session(session);
+                const doc = await query.lean().exec();
+                return doc as T | null;
+            },
+
             async findPage(options: PageOptions = {}): Promise<PageResult<T>> {
                 const { filter = {}, page = 1, limit = 10, sort } = options;
                 const mergedFilter = { ...filter, ...notDeletedFilter };
@@ -333,6 +352,46 @@ export class MongoAdapter {
 
                 const result = await model.deleteMany(mergedFilter, options).exec();
                 return result.deletedCount;
+            },
+
+            // -----------------------------
+            // Advanced Query Operations
+            // -----------------------------
+
+            async upsert(filter: Record<string, unknown>, data: Partial<T>): Promise<T> {
+                const mergedFilter = { ...filter, ...notDeletedFilter };
+                const timestampedData = timestampsEnabled
+                    ? { ...data, [updatedAtField]: new Date() }
+                    : data;
+
+                let query = model.findOneAndUpdate(
+                    mergedFilter,
+                    {
+                        $set: timestampedData,
+                        ...(timestampsEnabled ? { $setOnInsert: { [createdAtField]: new Date() } } : {})
+                    },
+                    { upsert: true, new: true }
+                );
+                if (session) query = query.session(session);
+                const doc = await query.lean().exec();
+                return doc as T;
+            },
+
+            async distinct<K extends keyof T>(field: K, filter: Record<string, unknown> = {}): Promise<T[K][]> {
+                const mergedFilter = { ...filter, ...notDeletedFilter };
+                let query = model.distinct(String(field), mergedFilter);
+                if (session) query = query.session(session);
+                const values = await query.exec();
+                return values as T[K][];
+            },
+
+            async select<K extends keyof T>(filter: Record<string, unknown>, fields: K[]): Promise<Pick<T, K>[]> {
+                const mergedFilter = { ...filter, ...notDeletedFilter };
+                const projection = fields.reduce((acc, field) => ({ ...acc, [field]: 1 }), {});
+                let query = model.find(mergedFilter).select(projection);
+                if (session) query = query.session(session);
+                const docs = await query.lean().exec();
+                return docs as Pick<T, K>[];
             },
 
             // -----------------------------

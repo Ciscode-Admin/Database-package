@@ -56,6 +56,9 @@ export {
     MongoDatabaseConfig,
     PostgresDatabaseConfig,
 
+    // Pool configuration
+    PoolConfig,
+
     // Module configuration
     DatabaseKitModuleOptions,
     DatabaseKitModuleAsyncOptions,
@@ -79,6 +82,10 @@ export {
 
     // Health check types
     HealthCheckResult,
+
+    // Event hooks
+    HookContext,
+    RepositoryHooks,
 
     // Repository options
     MongoRepositoryOptions,

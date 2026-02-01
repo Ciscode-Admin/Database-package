@@ -45,10 +45,20 @@ export class PostgresAdapter {
         if (!this.knexInstance) {
             this.logger.log('Creating PostgreSQL connection pool...');
 
+            // Apply pool configuration from config
+            const poolConfig = this.config.pool || {};
+            const pool = {
+                min: poolConfig.min ?? 0,
+                max: poolConfig.max ?? 10,
+                idleTimeoutMillis: poolConfig.idleTimeoutMs ?? 30000,
+                acquireTimeoutMillis: poolConfig.acquireTimeoutMs ?? 60000,
+            };
+
             this.knexInstance = knex({
                 client: 'pg',
                 connection: this.config.connectionString,
-                pool: { min: 0, max: 10 },
+                pool,
+                acquireConnectionTimeout: poolConfig.acquireTimeoutMs ?? 60000,
                 ...overrides,
             });
 
@@ -149,7 +159,7 @@ export class PostgresAdapter {
      * @param trx - Optional Knex transaction for transaction support
      * @returns Repository instance with CRUD methods
      */
-    createRepository<T = unknown>(cfg: PostgresEntityConfig, trx?: Knex.Transaction): Repository<T> {
+    createRepository<T = unknown>(cfg: PostgresEntityConfig<T>, trx?: Knex.Transaction): Repository<T> {
         const kx = trx || this.getKnex();
         const table = cfg.table;
         const pk = cfg.primaryKey || 'id';
@@ -164,6 +174,9 @@ export class PostgresAdapter {
         const timestampsEnabled = cfg.timestamps ?? false;
         const createdAtField = cfg.createdAtField ?? 'created_at';
         const updatedAtField = cfg.updatedAtField ?? 'updated_at';
+
+        // Hooks configuration
+        const hooks = cfg.hooks;
 
         // Create not-deleted filter for soft delete
         const notDeletedFilter: Record<string, unknown> = softDeleteEnabled
@@ -184,6 +197,55 @@ export class PostgresAdapter {
                 return { ...data, [updatedAtField]: new Date() };
             }
             return data;
+        };
+
+        // Hook helper functions
+        const runBeforeCreate = async (data: Partial<T>): Promise<Partial<T>> => {
+            if (hooks?.beforeCreate) {
+                const result = await hooks.beforeCreate({
+                    data,
+                    operation: 'create',
+                    isBulk: false,
+                });
+                return result ?? data;
+            }
+            return data;
+        };
+
+        const runAfterCreate = async (entity: T): Promise<void> => {
+            if (hooks?.afterCreate) {
+                await hooks.afterCreate(entity);
+            }
+        };
+
+        const runBeforeUpdate = async (data: Partial<T>): Promise<Partial<T>> => {
+            if (hooks?.beforeUpdate) {
+                const result = await hooks.beforeUpdate({
+                    data,
+                    operation: 'update',
+                    isBulk: false,
+                });
+                return result ?? data;
+            }
+            return data;
+        };
+
+        const runAfterUpdate = async (entity: T | null): Promise<void> => {
+            if (hooks?.afterUpdate) {
+                await hooks.afterUpdate(entity);
+            }
+        };
+
+        const runBeforeDelete = async (id: string | number): Promise<void> => {
+            if (hooks?.beforeDelete) {
+                await hooks.beforeDelete(id);
+            }
+        };
+
+        const runAfterDelete = async (success: boolean): Promise<void> => {
+            if (hooks?.afterDelete) {
+                await hooks.afterDelete(success);
+            }
         };
 
         const assertFieldAllowed = (field: string): void => {
@@ -257,9 +319,17 @@ export class PostgresAdapter {
 
         const repo: Repository<T> = {
             async create(data: Partial<T>): Promise<T> {
-                const timestampedData = addCreatedAt(data as Record<string, unknown>);
-                const [row] = await kx(table).insert(timestampedData).returning('*');
-                return row as T;
+                // Run beforeCreate hook
+                let processedData = await runBeforeCreate(data);
+                processedData = addCreatedAt(processedData as Record<string, unknown>) as Partial<T>;
+
+                const [row] = await kx(table).insert(processedData).returning('*');
+                const entity = row as T;
+
+                // Run afterCreate hook
+                await runAfterCreate(entity);
+
+                return entity;
             },
 
             async findById(id: string | number): Promise<T | null> {
@@ -278,6 +348,14 @@ export class PostgresAdapter {
                 applyFilter(qb, mergedFilter);
                 const rows = await qb;
                 return rows as T[];
+            },
+
+            async findOne(filter: Record<string, unknown>): Promise<T | null> {
+                const mergedFilter = { ...baseFilter, ...notDeletedFilter, ...filter };
+                const qb = kx(table).select('*');
+                applyFilter(qb, mergedFilter);
+                const row = await qb.first();
+                return (row as T) || null;
             },
 
             async findPage(options: PageOptions = {}): Promise<PageResult<T>> {
@@ -301,30 +379,47 @@ export class PostgresAdapter {
             },
 
             async updateById(id: string | number, update: Partial<T>): Promise<T | null> {
+                // Run beforeUpdate hook
+                let processedUpdate = await runBeforeUpdate(update);
+                processedUpdate = addUpdatedAt(processedUpdate as Record<string, unknown>) as Partial<T>;
+
                 const mergedFilter = { ...baseFilter, ...notDeletedFilter };
-                const timestampedUpdate = addUpdatedAt(update as Record<string, unknown>);
                 const qb = kx(table)
                     .where({ [pk]: id });
                 applyFilter(qb, mergedFilter);
-                const [row] = await qb.update(timestampedUpdate).returning('*');
-                return (row as T) || null;
+                const [row] = await qb.update(processedUpdate).returning('*');
+                const entity = (row as T) || null;
+
+                // Run afterUpdate hook
+                await runAfterUpdate(entity);
+
+                return entity;
             },
 
             async deleteById(id: string | number): Promise<boolean> {
+                // Run beforeDelete hook
+                await runBeforeDelete(id);
+
                 const mergedFilter = { ...baseFilter, ...notDeletedFilter };
+                let success: boolean;
 
                 // If soft delete is enabled, update instead of delete
                 if (softDeleteEnabled) {
                     const qb = kx(table).where({ [pk]: id });
                     applyFilter(qb, mergedFilter);
                     const affectedRows = await qb.update({ [softDeleteField]: new Date() });
-                    return affectedRows > 0;
+                    success = affectedRows > 0;
+                } else {
+                    const qb = kx(table).where({ [pk]: id });
+                    applyFilter(qb, mergedFilter);
+                    const affectedRows = await qb.delete();
+                    success = affectedRows > 0;
                 }
 
-                const qb = kx(table).where({ [pk]: id });
-                applyFilter(qb, mergedFilter);
-                const affectedRows = await qb.delete();
-                return affectedRows > 0;
+                // Run afterDelete hook
+                await runAfterDelete(success);
+
+                return success;
             },
 
             async count(filter: Record<string, unknown> = {}): Promise<number> {
@@ -390,6 +485,50 @@ export class PostgresAdapter {
                     .delete();
 
                 return affectedRows;
+            },
+
+            // -----------------------------
+            // Advanced Query Operations
+            // -----------------------------
+
+            async upsert(filter: Record<string, unknown>, data: Partial<T>): Promise<T> {
+                const mergedFilter = { ...baseFilter, ...notDeletedFilter, ...filter };
+
+                // Try to find existing record
+                const qb = kx(table).select('*');
+                applyFilter(qb, mergedFilter);
+                const existing = await qb.first();
+
+                if (existing) {
+                    // Update existing record
+                    const timestampedUpdate = addUpdatedAt(data as Record<string, unknown>);
+                    const updateQb = kx(table).where({ [pk]: existing[pk] });
+                    const [row] = await updateQb.update(timestampedUpdate).returning('*');
+                    return row as T;
+                } else {
+                    // Insert new record
+                    const timestampedData = addCreatedAt({ ...filter, ...data } as Record<string, unknown>);
+                    const [row] = await kx(table).insert(timestampedData).returning('*');
+                    return row as T;
+                }
+            },
+
+            async distinct<K extends keyof T>(field: K, filter: Record<string, unknown> = {}): Promise<T[K][]> {
+                const mergedFilter = { ...baseFilter, ...notDeletedFilter, ...filter };
+                const qb = kx(table)
+                    .distinct(String(field))
+                    .modify((q) => applyFilter(q, mergedFilter));
+                const rows = await qb;
+                return rows.map((row: Record<string, unknown>) => row[String(field)] as T[K]);
+            },
+
+            async select<K extends keyof T>(filter: Record<string, unknown>, fields: K[]): Promise<Pick<T, K>[]> {
+                const mergedFilter = { ...baseFilter, ...notDeletedFilter, ...filter };
+                const qb = kx(table)
+                    .select(fields.map(String))
+                    .modify((q) => applyFilter(q, mergedFilter));
+                const rows = await qb;
+                return rows as Pick<T, K>[];
             },
 
             // -----------------------------

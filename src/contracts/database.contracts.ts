@@ -13,6 +13,20 @@
 export type DatabaseType = 'mongo' | 'postgres';
 
 /**
+ * Connection pool configuration options.
+ */
+export interface PoolConfig {
+    /** Minimum number of connections in the pool (default: 0 for Postgres, 5 for Mongo) */
+    min?: number;
+    /** Maximum number of connections in the pool (default: 10) */
+    max?: number;
+    /** Connection idle timeout in milliseconds (default: 30000) */
+    idleTimeoutMs?: number;
+    /** Connection acquire timeout in milliseconds (default: 60000) */
+    acquireTimeoutMs?: number;
+}
+
+/**
  * Base configuration for all database types.
  */
 export interface DatabaseConfigBase {
@@ -20,6 +34,8 @@ export interface DatabaseConfigBase {
     type: DatabaseType;
     /** Connection string for the database */
     connectionString: string;
+    /** Connection pool configuration */
+    pool?: PoolConfig;
 }
 
 /**
@@ -27,6 +43,10 @@ export interface DatabaseConfigBase {
  */
 export interface MongoDatabaseConfig extends DatabaseConfigBase {
     type: 'mongo';
+    /** Server selection timeout in milliseconds (default: 5000) */
+    serverSelectionTimeoutMS?: number;
+    /** Socket timeout in milliseconds (default: 45000) */
+    socketTimeoutMS?: number;
 }
 
 /**
@@ -34,6 +54,10 @@ export interface MongoDatabaseConfig extends DatabaseConfigBase {
  */
 export interface PostgresDatabaseConfig extends DatabaseConfigBase {
     type: 'postgres';
+    /** Statement timeout in milliseconds (default: none) */
+    statementTimeout?: number;
+    /** Query timeout in milliseconds (default: none) */
+    queryTimeout?: number;
 }
 
 /**
@@ -41,6 +65,40 @@ export interface PostgresDatabaseConfig extends DatabaseConfigBase {
  * TypeScript will narrow the type based on the `type` property.
  */
 export type DatabaseConfig = MongoDatabaseConfig | PostgresDatabaseConfig;
+
+// -----------------------------
+// Event Hooks Types
+// -----------------------------
+
+/**
+ * Hook context passed to event hooks.
+ */
+export interface HookContext<T = unknown> {
+    /** The entity data being operated on */
+    data: T;
+    /** The operation being performed */
+    operation: 'create' | 'update' | 'delete' | 'upsert';
+    /** Whether this is a bulk operation */
+    isBulk: boolean;
+}
+
+/**
+ * Event hooks for repository lifecycle events.
+ */
+export interface RepositoryHooks<T = unknown> {
+    /** Called before creating an entity. Can modify data. */
+    beforeCreate?(context: HookContext<Partial<T>>): Promise<Partial<T>> | Partial<T>;
+    /** Called after creating an entity. */
+    afterCreate?(entity: T): Promise<void> | void;
+    /** Called before updating an entity. Can modify data. */
+    beforeUpdate?(context: HookContext<Partial<T>>): Promise<Partial<T>> | Partial<T>;
+    /** Called after updating an entity. */
+    afterUpdate?(entity: T | null): Promise<void> | void;
+    /** Called before deleting an entity. */
+    beforeDelete?(id: string | number): Promise<void> | void;
+    /** Called after deleting an entity. */
+    afterDelete?(success: boolean): Promise<void> | void;
+}
 
 // -----------------------------
 // Health Check Types
@@ -130,6 +188,13 @@ export interface Repository<T = unknown, Filter = Record<string, unknown>> {
     findById(id: string | number): Promise<T | null>;
 
     /**
+     * Finds a single entity matching the filter.
+     * @param filter - Filter criteria
+     * @returns The first matching entity or null
+     */
+    findOne(filter: Filter): Promise<T | null>;
+
+    /**
      * Finds all entities matching the filter.
      * @param filter - Optional filter criteria
      * @returns Array of matching entities
@@ -199,6 +264,35 @@ export interface Repository<T = unknown, Filter = Record<string, unknown>> {
     deleteMany(filter: Filter): Promise<number>;
 
     // -----------------------------
+    // Advanced Query Operations
+    // -----------------------------
+
+    /**
+     * Creates or updates an entity based on a filter.
+     * If entity exists, updates it; otherwise creates a new one.
+     * @param filter - Filter to find existing entity
+     * @param data - Data to create or update with
+     * @returns The created or updated entity
+     */
+    upsert(filter: Filter, data: Partial<T>): Promise<T>;
+
+    /**
+     * Returns distinct values for a specified field.
+     * @param field - The field to get distinct values for
+     * @param filter - Optional filter criteria
+     * @returns Array of distinct values
+     */
+    distinct<K extends keyof T>(field: K, filter?: Filter): Promise<T[K][]>;
+
+    /**
+     * Finds entities with specific fields only (projection).
+     * @param filter - Filter criteria
+     * @param fields - Array of field names to include
+     * @returns Array of entities with selected fields only
+     */
+    select<K extends keyof T>(filter: Filter, fields: K[]): Promise<Pick<T, K>[]>;
+
+    // -----------------------------
     // Soft Delete Operations
     // -----------------------------
 
@@ -258,7 +352,7 @@ export interface Repository<T = unknown, Filter = Record<string, unknown>> {
 /**
  * Options for creating a MongoDB repository.
  */
-export interface MongoRepositoryOptions {
+export interface MongoRepositoryOptions<T = unknown> {
     /** Mongoose Model instance */
     model: unknown; // Using unknown to avoid Mongoose type dependency
     /**
@@ -283,12 +377,16 @@ export interface MongoRepositoryOptions {
      * Field name for updated timestamp (default: 'updatedAt').
      */
     updatedAtField?: string;
+    /**
+     * Lifecycle hooks for repository operations.
+     */
+    hooks?: RepositoryHooks<T>;
 }
 
 /**
  * Options for creating a PostgreSQL repository.
  */
-export interface PostgresEntityConfig {
+export interface PostgresEntityConfig<T = unknown> {
     /** Table name in PostgreSQL */
     table: string;
     /** Primary key column (default: "id") */
@@ -325,6 +423,10 @@ export interface PostgresEntityConfig {
      * Field name for updated timestamp (default: 'updated_at').
      */
     updatedAtField?: string;
+    /**
+     * Lifecycle hooks for repository operations.
+     */
+    hooks?: RepositoryHooks<T>;
 }
 
 // -----------------------------
